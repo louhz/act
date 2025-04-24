@@ -197,6 +197,54 @@ class CNNMLP(nn.Module):
         return a_hat
 
 
+class CNNMLP_hand(nn.Module):
+    
+    
+    def __init__(self, backbones, state_dim, object_id):
+        super().__init__()
+        self.object_id = object_id
+        self.action_head = nn.Linear(1000, state_dim) # TODO add more
+        if backbones is not None:
+            self.backbones = nn.ModuleList(backbones)
+            backbone_down_projs = []
+            for backbone in backbones:
+                down_proj = nn.Sequential(
+                    nn.Conv2d(backbone.num_channels, 128, kernel_size=5),
+                    nn.Conv2d(128, 64, kernel_size=5),
+                    nn.Conv2d(64, 32, kernel_size=5)
+                )
+                backbone_down_projs.append(down_proj)
+            self.backbone_down_projs = nn.ModuleList(backbone_down_projs)
+
+            mlp_in_dim = 768 * len(backbones) + 14
+            self.mlp = mlp(input_dim=mlp_in_dim, hidden_dim=1024, output_dim=14, hidden_depth=2)
+        else:
+            raise NotImplementedError
+    def forward(self, qpos, vertices, object_id, actions=None):
+        """
+        qpos: batch, qpos_dim
+        image: batch, num_cam, channel, height, width
+        env_state: None
+        actions: batch, seq, action_dim
+        """
+        is_training = actions is not None # train or val
+        bs, _ = qpos.shape
+        # state observation features, pre-category information from semantic and position embeddings
+        all_object_features = []
+        for instance,semantic in enumerate(self.object_id):
+            features, pos = self.backbones[instance](vertices[:])
+            features = features[0] # take the last layer feature
+            pos = pos[0] # not used
+            all_object_features.append(self.backbone_down_projs[instance](features))
+        # flatten everything
+        flattened_features = []
+        for obj_feature in all_object_features:
+            flattened_features.append(obj_feature.reshape([bs, -1]))
+        flattened_features = torch.cat(flattened_features, axis=1) # 768 each
+        features = torch.cat([flattened_features, qpos], axis=1) # qpos: 14
+        a_hat = self.mlp(features)
+        return a_hat
+
 def mlp(input_dim, hidden_dim, output_dim, hidden_depth):
     if hidden_depth == 0:
         mods = [nn.Linear(input_dim, output_dim)]
@@ -269,6 +317,30 @@ def build_cnnmlp(args):
         backbones,
         state_dim=state_dim,
         camera_names=args.camera_names,
+    )
+
+    n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print("number of parameters: %.2fM" % (n_parameters/1e6,))
+
+    return model
+
+
+
+def build_cnnmlp_HAND(args):
+    state_dim = args.state_dim # based on different object semantic and instance id
+
+    # From state
+    # backbone = None # from state for now, no need for conv nets
+    # From image
+    backbones = []
+    for _ in args.camera_names:
+        backbone = build_backbone(args)
+        backbones.append(backbone)
+
+    model = CNNMLP_hand(
+        backbones,
+        state_dim=state_dim,
+        object_id=args.object_id,
     )
 
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)

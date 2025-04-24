@@ -37,6 +37,8 @@ def make_ee_sim_env(task_name):
     """
     if 'sim_transfer_cube' in task_name:
         xml_path = os.path.join(XML_DIR, f'bimanual_viperx_ee_transfer_cube.xml')
+
+        # here is the solver
         physics = mujoco.Physics.from_xml_path(xml_path)
         task = TransferCubeEETask(random=False)
         env = control.Environment(physics, task, time_limit=20, control_timestep=DT,
@@ -130,6 +132,9 @@ class BimanualViperXEETask(base.Task):
 
     def get_observation(self, physics):
         # note: it is important to do .copy()
+
+        # need to edit here from the images to the state based method
+
         obs = collections.OrderedDict()
         obs['qpos'] = self.get_qpos(physics)
         obs['qvel'] = self.get_qvel(physics)
